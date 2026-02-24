@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
@@ -62,51 +61,55 @@ df['Return'] = df['Close'].pct_change()
 # Volatility
 df['Volatility'] = df['Return'].rolling(window=21).std()
 
-# 6.Feature Engineering
-# Moving Averages
+
+# 6. Feature Engineering
+# Moving averages
 df['MA10'] = df['Close'].rolling(10).mean()
 df['MA50'] = df['Close'].rolling(50).mean()
 df['MA200'] = df['Close'].rolling(200).mean()
 
 # Exponential Moving Average
-df['EMA10'] = df['Close'].ewm(span=10).mean()
+df['EMA10'] = df['Close'].ewm(span=10, adjust=False).mean()
 
-# RSI (Relative Strength Index)
+# RSI
 delta = df['Close'].diff()
 gain = (delta.where(delta > 0, 0)).rolling(14).mean()
 loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
 rs = gain / loss
-
 df['RSI'] = 100 - (100 / (1 + rs))
 
-# Target Variable (Future Return)
-df['Future_Return'] = df['Close'].pct_change().shift(-1)
+# Target
+df['Future_Return'] = df['Close'].pct_change(periods=5).shift(-5)
+
 
 # 7. Prepare Training Data
 # Drop NA
-df = df.dropna()
+df = df.dropna().copy()
 
-# Feature Selection
-features = ['Close','MA10','MA50','MA200','EMA10','RSI','Volatility']
+print("Training on ALL companies")
+
+# ===== Feature Selection =====
+features = ['Close', 'MA10', 'MA50', 'MA200', 'EMA10', 'RSI', 'Volatility']
+
+print("Available columns:", df.columns.tolist())
+
 X = df[features]
 y = df['Future_Return']
 
 # Train-Test Split (Time Series)
-
 # features and target already prepared as X, y
+split = int(len(X) * 0.8)
 
-split = int(len(df) * 0.8)
+# safety check
+if split >= len(X):
+    split = len(X) - 1
 
-X_train, X_test = X.iloc[:split], X.iloc[split:]
-y_train, y_test = y.iloc[:split], y.iloc[split:]
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
 
 print(f"Train size: {len(X_train)}")
 print(f"Test size: {len(X_test)}")
 
-# Scaling
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
 
 # 8. Model Building
 # Model 1: XGBoost
@@ -122,17 +125,17 @@ xgb = XGBRegressor(
     n_jobs=-1
 )
 
-xgb.fit(X_train_scaled, y_train)
+xgb.fit(X_train, y_train)
 print(" XGBoost trained")
 
-xgb_pred = xgb.predict(X_test_scaled)
+xgb_pred = xgb.predict(X_test)
 
 # Model 2: Random Forest
 print(" Preparing subset for Random Forest...")
 
-rf_sample_size = min(300000, len(X_train_scaled))  # adjust if needed
+rf_sample_size = min(300000, len(X_train))  # adjust if needed
 
-X_train_rf = X_train_scaled[:rf_sample_size]
+X_train_rf = X_train[:rf_sample_size]
 y_train_rf = y_train[:rf_sample_size]
 
 print(f"RF training on {len(X_train_rf)} samples")
@@ -149,7 +152,8 @@ rf = RandomForestRegressor(
 rf.fit(X_train_rf, y_train_rf)
 print(" Random Forest trained")
 
-rf_pred = rf.predict(X_test_scaled)
+rf_pred = rf.predict(X_test)
+
 
 # 9. Model Evaluation
 # calculate metrics once
@@ -197,13 +201,11 @@ os.makedirs("outputs", exist_ok=True)
 # save BEST model with fixed name
 pickle.dump(best_model, open("outputs/best_model.pkl", "wb"))
 
-# save scaler (VERY IMPORTANT)
-pickle.dump(scaler, open("outputs/scaler.pkl", "wb"))
-
 print(" Best model saved as outputs/best_model.pkl")
 
-# 11. Visualization of Predictions
-sample_size = 500000  # adjust if needed
+# 11. Visualization
+sample_size = min(2000, len(y_test)) 
+
 y_sample = y_test.values[:sample_size]
 
 if xgb_rmse <= rf_rmse:
@@ -212,8 +214,8 @@ else:
     pred_sample = rf_pred[:sample_size]
 
 plt.figure(figsize=(12,5))
-plt.plot(y_sample, label="Actual")
-plt.plot(pred_sample, label="Predicted")
+plt.plot(y_sample, label="Actual", alpha=0.7)
+plt.plot(pred_sample, label="Predicted", alpha=0.7)
 plt.legend()
 plt.title("Actual vs Predicted Returns (Sample)")
 plt.savefig("outputs/actual_vs_pred.png")
